@@ -1,0 +1,33 @@
+version: '3'
+
+services:
+  backend:
+    build: ./number-plate-detector-api
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./number-plate-detector-api/.env:/app/.env
+    env_file:
+      - ./number-plate-detector-api/.env
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: ./number-plate-detector
+      args:
+        - BACKEND_URL=http://backend:8002
+    ports:
+      - "3003:3003"
+    depends_on:
+      - backend
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge 

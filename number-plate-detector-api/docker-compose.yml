@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./.env:/app/.env
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    restart: unless-stopped 
