@@ -5,8 +5,6 @@ __pycache__/
 *.so
 .Python
 env/
-venv/
-ENV/
 build/
 develop-eggs/
 dist/
@@ -22,21 +20,22 @@ var/
 .installed.cfg
 *.egg
 
-# Docker
-.dockerignore
-Dockerfile
-docker-compose.yml
+# Environment files
+.env
+.venv
+venv/
+ENV/
 
-# Git
+# Version control
 .git
 .gitignore
 
-# Environment variables
-.env
-.env.local
-
-# IDE
+# Other
 .idea/
 .vscode/
 *.swp
-*.swo 
+*.swo
+.DS_Store
+*.pem
+README.md
+DEPLOY.md 

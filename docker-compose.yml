@@ -9,6 +9,10 @@ services:
       - ./number-plate-detector-api/.env:/app/.env
     env_file:
       - ./number-plate-detector-api/.env
+    environment:
+      - PORT=8002
+      # Add CORS allowed origins
+      - CORS_ORIGINS=https://cc-project-frontend-107894419251.us-central1.run.app,http://localhost:3000,http://localhost:3003
     restart: unless-stopped
     networks:
       - app-network
@@ -16,8 +20,6 @@ services:
   frontend:
     build:
       context: ./number-plate-detector
-      args:
-        - BACKEND_URL=http://backend:8002
     ports:
       - "3003:3003"
     depends_on:

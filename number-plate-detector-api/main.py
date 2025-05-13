@@ -1,130 +1,138 @@
+import os
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import base64
-from PIL import Image
-import io
-import openai
-import os
+import logging
 from dotenv import load_dotenv
-from typing import Optional
+import io
+from openai import OpenAI
+from typing import List, Optional
+import base64
 
 # Load environment variables
 load_dotenv()
 
-# Initialize FastAPI app
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize the FastAPI app
 app = FastAPI(title="Number Plate Detection API")
 
 # Configure CORS
+# Get allowed origins from environment variable or use defaults
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+default_origins = [
+    "http://localhost:3000",
+    "http://localhost:3003",
+    "https://cc-project-frontend-107894419251.us-central1.run.app",
+]
+
+# Parse the CORS_ORIGINS environment variable
+if cors_origins_env:
+    origins = cors_origins_env.split(",")
+    logger.info(f"Using CORS origins from environment: {origins}")
+else:
+    origins = default_origins
+    logger.info(f"Using default CORS origins: {origins}")
+
+# Add the CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @app.get("/")
-def read_root():
+async def root():
+    """Root endpoint to check if the API is running."""
     return {"message": "Number Plate Detection API"}
 
 @app.post("/detect-plate")
 async def detect_plate(file: UploadFile = File(...)):
+    """
+    Detect a number plate in an uploaded image using OpenAI's vision model.
+    """
     try:
-        # Validate file type
-        if not file.content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="File must be an image")
-        
-        # Read image
+        # Read the uploaded file
         contents = await file.read()
         
-        # Process image (resize if needed)
-        try:
-            image = Image.open(io.BytesIO(contents))
-            
-            # Resize if too large (optional)
-            max_size = 800
-            if max(image.size) > max_size:
-                ratio = max_size / max(image.size)
-                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-                image = image.resize(new_size, Image.Resampling.LANCZOS)
-            
-            # Convert back to bytes
-            buffer = io.BytesIO()
-            image.save(buffer, format=image.format or "JPEG")
-            processed_image = buffer.getvalue()
-            
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
+        # Log the request
+        logger.info(f"Processing file: {file.filename}, size: {len(contents)} bytes")
         
-        # Convert to base64
-        base64_image = base64.b64encode(processed_image).decode("utf-8")
-        mime_type = file.content_type
-        data_uri = f"data:{mime_type};base64,{base64_image}"
+        # Process stages for frontend tracking
+        stages = [
+            {"step": 1, "name": "image_received", "message": "Image received successfully", "completed": True},
+            {"step": 2, "name": "processing_image", "message": "Processing image", "completed": False},
+            {"step": 3, "name": "detecting_plate", "message": "Detecting number plate with AI", "completed": False},
+            {"step": 4, "name": "extracting_text", "message": "Extracting text from plate", "completed": False},
+            {"step": 5, "name": "completed", "message": "Process completed", "completed": False}
+        ]
         
-        # Send to OpenAI
+        # Convert image to base64 for OpenAI API
+        base64_image = base64.b64encode(contents).decode('utf-8')
+        
+        # Update stage
+        stages[1]["completed"] = True
+        
+        # Send to OpenAI Vision API for number plate detection
         try:
-            if not os.getenv("OPENAI_API_KEY"):
-                raise HTTPException(
-                    status_code=500, 
-                    detail="OpenAI API key is not set. Please set the OPENAI_API_KEY environment variable."
-                )
-                
-            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            # Update stage
+            stages[2]["completed"] = True
+            
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o-mini", 
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a computer vision expert specialized in detecting license plates from car images. Respond with ONLY the license plate number if you can see one. If no license plate is visible, respond with 'No license plate detected'. If the image is not a car, respond with 'Not a car image'."
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "What's the license plate number in this image?"},
-                            {"type": "image_url", "image_url": {"url": data_uri}}
-                        ],
-                    },
+                    {"role": "system", "content": "You are a computer vision assistant that specializes in analyzing images of vehicles and extracting number plate information. Your task is to identify and extract the number plate text from the vehicle image provided."},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "Please look at this image of a vehicle and extract the number plate text. ONLY return the exact number plate text, nothing else. If you cannot identify a number plate, just respond with 'NO_PLATE_DETECTED'."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    ]}
                 ],
                 max_tokens=100
             )
             
-            ai_response = response.choices[0].message.content.strip()
+            # Update stage
+            stages[3]["completed"] = True
             
-            # Prepare result
-            if "not a car" in ai_response.lower():
-                result = {
-                    "success": True,
-                    "imageUrl": data_uri,
-                    "message": "The uploaded image does not appear to be a car.",
-                    "numberPlate": None
-                }
-            elif "no license plate" in ai_response.lower() or "no licence plate" in ai_response.lower():
-                result = {
-                    "success": True,
-                    "imageUrl": data_uri,
-                    "message": "No number plate detected in the image.",
-                    "numberPlate": None
-                }
-            else:
-                result = {
-                    "success": True,
-                    "imageUrl": data_uri,
-                    "message": "Number plate detected successfully.",
-                    "numberPlate": ai_response
-                }
-                
-            return JSONResponse(content=result)
+            # Extract the number plate text from the response
+            plate_text = response.choices[0].message.content.strip()
+            
+            # Check if a plate was detected
+            if plate_text == "NO_PLATE_DETECTED":
+                # Update final stage
+                stages[4]["completed"] = True
+                return JSONResponse(content={
+                    "success": False,
+                    "plate_number": None,
+                    "message": "No number plate detected in the image",
+                    "stages": stages
+                })
+            
+            # Update final stage
+            stages[4]["completed"] = True
+            
+            # Return the successful result
+            return JSONResponse(content={
+                "success": True,
+                "plate_number": plate_text,
+                "stages": stages
+            })
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
-            
+            logger.error(f"OpenAI API error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error processing image with AI: {str(e)}")
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        logger.error(f"Error processing upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing upload: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
+    # Start the server
+    uvicorn.run("main:app", host="0.0.0.0", port=8002)
